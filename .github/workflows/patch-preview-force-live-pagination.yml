@@ -1,0 +1,119 @@
+name: Patch Preview Force Live Pagination
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-preview-force-live-pagination.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace preview loader with live paginated loader
+        run: |
+          cat > /tmp/patch_preview.py <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('scanner-table-preview.html')
+          s = p.read_text(encoding='utf-8')
+          original = s
+
+          # Ensure page state variables exist.
+          if 'pageLimit=500' not in s:
+              s = s.replace(
+                  "let allRows=[],lastRows=[],sortState={key:null,dir:'asc'},lastGen=null;",
+                  "let allRows=[],lastRows=[],sortState={key:null,dir:'asc'},lastGen=null,pageLimit=500,pageOffset=0,totalLiveRows=0,nextLiveOffset=null;",
+                  1,
+              )
+              s = s.replace(
+                  "let allRows=[],lastRows=[],sortState={key:null,dir:'asc'},lastGen=null,selectedRow=0;",
+                  "let allRows=[],lastRows=[],sortState={key:null,dir:'asc'},lastGen=null,selectedRow=0,pageLimit=500,pageOffset=0,totalLiveRows=0,nextLiveOffset=null;",
+                  1,
+              )
+
+          # Ensure CTA exists beside reset button.
+          if 'id="loadNextBtn"' not in s:
+              s = s.replace(
+                  '<button class="btn secondary" id="resetBtn">Reset Defaults</button>',
+                  '<button class="btn secondary" id="resetBtn">Reset Defaults</button><button class="btn secondary" id="loadNextBtn" disabled>Load Next 500 Records</button>',
+                  1,
+              )
+
+          # Replace the existing loadBoard implementation with a forced live paginated implementation.
+          replacement = """async function loadBoard(append=false){
+            try{
+              let url='/.netlify/functions/scan-results-preview?limit='+pageLimit+'&offset='+pageOffset+'&_ts='+Date.now();
+              let res=await fetch(url,{cache:'no-store'});
+              let data=await res.json();
+              if(data&&Array.isArray(data.results)&&data.results.length){
+                let incoming=data.results.map(map);
+                if(append) allRows=allRows.concat(incoming); else allRows=incoming;
+                totalLiveRows=data.total||data.matched||allRows.length;
+                nextLiveOffset=(data.nextOffset!==undefined&&data.nextOffset!==null)?data.nextOffset:(data.hasMore?pageOffset+pageLimit:null);
+                if($('universeCount'))$('universeCount').textContent=data.universeCount||'—';
+                if($('pulledCount'))$('pulledCount').textContent=data.scanned||'—';
+                if($('rawContracts'))$('rawContracts').textContent=data.rawContracts||'Verify';
+                if($('condorCount'))$('condorCount').textContent=data.withCondor||data.total||allRows.length;
+                if($('truthDataMode'))$('truthDataMode').textContent=data.filterMode||'Live preview slice';
+                if($('truthLastScan'))$('truthLastScan').textContent=data.generatedAt?new Date(data.generatedAt).toLocaleString():'—';
+                if($('truthUniverse'))$('truthUniverse').textContent=(data.universeCount||'—')+' symbols';
+                if($('truthBuild'))$('truthBuild').textContent=data.building?'Finalizing with live rows':'Ready';
+                if($('explanation'))$('explanation').textContent='Loaded '+allRows.length.toLocaleString()+' of '+totalLiveRows.toLocaleString()+' live records before display filtering. '+(data.userMessage||'');
+                updateLoadNext();
+                msg('Live board loaded. '+allRows.length.toLocaleString()+' of '+totalLiveRows.toLocaleString()+' records available in the table.','ok');
+                apply();
+                if(lastRows.length)showTicket(0);
+                return;
+              }
+              throw new Error('No live rows returned');
+            }catch(e){
+              console.error(e);
+              sampleFallback();
+              msg('Live board unavailable; sample preview rendered.','warn');
+            }
+          }
+          function updateLoadNext(){let b=$('loadNextBtn');if(!b)return;let has=nextLiveOffset!==null&&nextLiveOffset!==undefined;b.disabled=!has;b.textContent=has?'Load Next 500 Records':'All Records Loaded'}
+          async function loadNextRecords(){if(nextLiveOffset===null||nextLiveOffset===undefined)return;pageOffset=nextLiveOffset;msg('Loading next 500 live records…','warn');await loadBoard(true)}
+          function em(r){"""
+
+          s2 = re.sub(r"async function loadBoard\([^)]*\)\{.*?function em\(r\)\{", replacement, s, count=1)
+          if s2 != s:
+              s = s2
+
+          # Force runScan to reset pagination.
+          s = s.replace(
+              "async function runScan(){let b=$('runScanBtn');b.disabled=true;",
+              "async function runScan(){pageOffset=0;nextLiveOffset=null;allRows=[];updateLoadNext();let b=$('runScanBtn');b.disabled=true;",
+              1,
+          )
+
+          # Bind CTA.
+          if "$('loadNextBtn').onclick=loadNextRecords" not in s:
+              s = s.replace(
+                  "$('resetBtn').onclick=resetDefaults;",
+                  "$('resetBtn').onclick=resetDefaults;if($('loadNextBtn'))$('loadNextBtn').onclick=loadNextRecords;",
+                  1,
+              )
+
+          if s != original:
+              p.write_text(s, encoding='utf-8')
+              print('Forced live pagination loader applied.')
+          else:
+              print('No changes made.')
+          PY
+          python3 /tmp/patch_preview.py
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add scanner-table-preview.html
+          git commit -m "Force preview page to use live paginated data loader"
+          git push
