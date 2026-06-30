@@ -1,5 +1,5 @@
 // POPPA'S preview scanner controller.
-// Band-aware loader with restored row selection, ticket rendering, EM color coding, and row-level IV Status.
+// Band-aware loader with direct ticket rendering, row selection, graph view, EM/IV color coding, and Next Records CTA.
 (function(){
   var LIMIT = 50;
   var pageOffset = 0;
@@ -10,8 +10,8 @@
   function el(id){ return document.getElementById(id); }
   function text(id, value){ var x=el(id); if(x) x.textContent = value; }
   function html(id, value){ var x=el(id); if(x) x.innerHTML = value; }
-  function msgOut(value, kind){ if(typeof msg === 'function') msg(value, kind || 'warn'); else console.log(value); }
   function val(id, fallback){ var x=el(id); return x && x.value !== undefined && x.value !== '' ? x.value : fallback; }
+  function msgOut(value, kind){ if(typeof msg === 'function') msg(value, kind || 'warn'); else console.log(value); }
   function esc(v){ return String(v == null ? '—' : v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function money(v){ var n=Number(v); return Number.isFinite(n) ? '$' + n.toFixed(2) : '—'; }
   function pct(v,d){ var n=Number(v); return Number.isFinite(n) ? n.toFixed(d == null ? 2 : d) + '%' : '—'; }
@@ -21,15 +21,14 @@
     if(document.getElementById('preview-ui-restore-css')) return;
     var st=document.createElement('style');
     st.id='preview-ui-restore-css';
-    st.textContent='.table-wrap{position:relative} .table-wrap th{position:sticky;top:0;z-index:8;background:#061225} .em-out{color:var(--green)!important;font-weight:900}.em-near{color:var(--amber)!important;font-weight:900}.em-in{color:var(--red)!important;font-weight:900}.iv-inflated{color:var(--amber);font-weight:900}.iv-fair{color:var(--green);font-weight:900}.iv-deflated{color:var(--red);font-weight:900}.result-row{cursor:pointer}.result-row.row-active td{background:rgba(123,220,255,.13)!important;box-shadow:inset 3px 0 0 var(--cyan)}';
+    st.textContent='.table-wrap{position:relative}.table-wrap th{position:sticky;top:0;z-index:8;background:#061225}.em-out{color:var(--green)!important;font-weight:900}.em-near{color:var(--amber)!important;font-weight:900}.em-in{color:var(--red)!important;font-weight:900}.iv-inflated{color:var(--amber);font-weight:900}.iv-fair{color:var(--green);font-weight:900}.iv-deflated{color:var(--red);font-weight:900}.result-row{cursor:pointer}.result-row.row-active td{background:rgba(123,220,255,.13)!important;box-shadow:inset 3px 0 0 var(--cyan)}#loadNextBtn{display:inline-block!important;margin-left:10px}';
     document.head.appendChild(st);
   }
 
   function hideExtraControls(){
-    var run=el('runScanBtn'), reset=el('resetBtn'), load=el('loadNextBtn'), rescan=el('rescanBtn');
+    var run=el('runScanBtn'), reset=el('resetBtn'), rescan=el('rescanBtn');
     if(run) run.style.display='none';
     if(reset) reset.style.display='none';
-    if(load) load.style.display='none';
     if(rescan){ rescan.style.display=''; rescan.textContent='↻ Re-scan Live Data'; rescan.classList.add('primary'); }
   }
 
@@ -47,13 +46,13 @@
     return 'edge';
   }
 
-  function readBandParams(){
+  function readBandParams(offset){
     var dte = readDte();
     var width = val('spreadWidth','5');
     var q = new URLSearchParams();
     LIMIT = parseInt(val('maxResults','50'),10) || 50;
     q.set('limit', String(LIMIT));
-    q.set('offset', String(pageOffset));
+    q.set('offset', String(offset || 0));
     q.set('rocMin', val('rocMin','5'));
     q.set('rocMax', val('rocMax','10'));
     q.set('minProb', val('minProb','90'));
@@ -93,24 +92,23 @@
   function ivClass(v){ v=String(v).toLowerCase(); if(v.indexOf('inflated')>=0) return 'iv-inflated'; if(v.indexOf('deflated')>=0) return 'iv-deflated'; return 'iv-fair'; }
   function emClass(v){ v=String(v||'').toLowerCase(); if(v.indexOf('outside')>=0) return 'em-out'; if(v.indexOf('inside')>=0) return 'em-in'; if(v.indexOf('near')>=0) return 'em-near'; return ''; }
 
-  function renderRows(rows){
+  function renderRows(rows, append){
     var body = el('resultsBody');
     if(!body) return;
-    currentRows = rows || [];
+    currentRows = append ? currentRows.concat(rows || []) : (rows || []);
     if(!currentRows.length){
       body.innerHTML = '<tr><td colspan="99" class="empty">No rows match the current Band Intake values.</td></tr>';
       renderTicket(null);
       return;
     }
     body.innerHTML = currentRows.map(function(r, i){
-      var rank = pageOffset + i + 1;
       var prob = r.prob != null ? r.prob : (r.probOtm != null ? Math.round(Number(r.probOtm) * 100) : null);
       var oi = r.openInterest || r.monthlyOI || r.oi || 0;
       var review = r.reviewStatus || r.note || (r.passed ? 'Matches primary filters ✓' : 'Candidate for manual review');
       var ivs = ivStatusFor(r);
       var ems = r.expectedMoveStatus || r.emStatus || 'Verify';
       return '<tr class="result-row" data-row="'+i+'">' +
-        '<td>'+rank+'</td>' +
+        '<td>'+(i+1)+'</td>' +
         '<td><strong>'+esc(r.symbol)+'</strong></td>' +
         '<td>'+esc(r.sector || r.market || '—')+'</td>' +
         '<td>'+money(r.spot)+'</td>' +
@@ -144,7 +142,7 @@
     var panels=Array.prototype.slice.call(document.querySelectorAll('.panel'));
     for(var i=0;i<panels.length;i++){
       var t=panels[i].textContent || '';
-      if(t.indexOf('ORDER TICKET')>=0 || t.indexOf('Tap a result')>=0 || t.indexOf('Run a scan, then select')>=0) return panels[i];
+      if(t.indexOf('ORDER TICKET')>=0 || t.indexOf('Tap a result')>=0 || t.indexOf('Run a scan, then select')>=0 || t.indexOf('Candidate Ticket')>=0) return panels[i];
     }
     return null;
   }
@@ -156,9 +154,6 @@
       Array.prototype.forEach.call(body.querySelectorAll('tr'), function(tr){ tr.classList.remove('row-active'); });
       var active=body.querySelector('tr[data-row="'+idx+'"]');
       if(active) active.classList.add('row-active');
-    }
-    if(typeof showTicket === 'function'){
-      try{ window.lastRows=currentRows; showTicket(idx); return; }catch(e){ console.warn('showTicket fallback used', e); }
     }
     renderTicket(row);
   }
@@ -176,28 +171,13 @@
     var min=Math.min(low||spot, spot, Number(r.shortPut||spot));
     var max=Math.max(high||spot, spot, Number(r.shortCall||spot));
     var pctSpot = max>min ? Math.max(0, Math.min(100, (spot-min)/(max-min)*100)) : 50;
-    p.innerHTML='<p class="eyebrow">Order Ticket · 4-Leg Iron Condor</p><h2 class="title">'+esc(r.symbol)+' Candidate Ticket</h2>'+
-      '<div class="note"><strong>Educational review only:</strong> verify live option chain pricing, liquidity, earnings, and risk before any decision.</div>'+
-      '<div class="ticket">'+
-        '<div class="leg sell"><span>Sell Put</span><strong>'+esc(r.shortPut || 'Verify')+'</strong></div>'+
-        '<div class="leg"><span>Buy Put</span><strong>'+esc(r.longPut || 'Verify')+'</strong></div>'+
-        '<div class="leg sell"><span>Sell Call</span><strong>'+esc(r.shortCall || 'Verify')+'</strong></div>'+
-        '<div class="leg"><span>Buy Call</span><strong>'+esc(r.longCall || 'Verify')+'</strong></div>'+
-      '</div>'+
-      '<div class="ticket-math">'+
-        '<div class="tm"><span>Credit</span><strong>'+money(r.credit)+'</strong></div>'+
-        '<div class="tm"><span>Max Risk</span><strong>'+money(risk)+'</strong></div>'+
-        '<div class="tm"><span>ROC</span><strong>'+pct(r.roc,2)+'</strong></div>'+
-        '<div class="tm"><span>Anchor P(OTM)</span><strong>'+pct(prob,0)+'</strong></div>'+
-      '</div>'+
-      '<div class="viz"><span class="eyebrow">Expected Move / Spot View</span><div class="bar"><span class="spot" style="left:'+pctSpot+'%"></span></div><div class="vizlabels"><span>Expected Low '+money(low)+'</span><span>Spot '+money(spot)+'</span><span>Expected High '+money(high)+'</span></div></div>'+
-      '<ul class="review-list"><li>EM Status: <b class="'+emClass(r.expectedMoveStatus)+'">'+esc(r.expectedMoveStatus || 'Verify')+'</b></li><li>IV Status: <b class="'+ivClass(ivStatusFor(r))+'">'+esc(ivStatusFor(r))+'</b></li><li>Review Status: '+esc(r.reviewStatus || r.note || 'Candidate for manual review')+'</li></ul>';
+    p.innerHTML='<p class="eyebrow">Order Ticket · 4-Leg Iron Condor</p><h2 class="title">'+esc(r.symbol)+' Candidate Ticket</h2>'+ '<div class="note"><strong>Educational review only:</strong> verify live option chain pricing, liquidity, earnings, and risk before any decision.</div>'+ '<div class="ticket">'+ '<div class="leg sell"><span>Sell Put</span><strong>'+esc(r.shortPut || 'Verify')+'</strong></div>'+ '<div class="leg"><span>Buy Put</span><strong>'+esc(r.longPut || 'Verify')+'</strong></div>'+ '<div class="leg sell"><span>Sell Call</span><strong>'+esc(r.shortCall || 'Verify')+'</strong></div>'+ '<div class="leg"><span>Buy Call</span><strong>'+esc(r.longCall || 'Verify')+'</strong></div>'+ '</div>'+ '<div class="ticket-math">'+ '<div class="tm"><span>Credit</span><strong>'+money(r.credit)+'</strong></div>'+ '<div class="tm"><span>Max Risk</span><strong>'+money(risk)+'</strong></div>'+ '<div class="tm"><span>ROC</span><strong>'+pct(r.roc,2)+'</strong></div>'+ '<div class="tm"><span>Anchor P(OTM)</span><strong>'+pct(prob,0)+'</strong></div>'+ '</div>'+ '<div class="viz"><span class="eyebrow">Expected Move / Spot View</span><div class="bar"><span class="spot" style="left:'+pctSpot+'%"></span></div><div class="vizlabels"><span>Expected Low '+money(low)+'</span><span>Spot '+money(spot)+'</span><span>Expected High '+money(high)+'</span></div></div>'+ '<ul class="review-list"><li>EM Status: <b class="'+emClass(r.expectedMoveStatus)+'">'+esc(r.expectedMoveStatus || 'Verify')+'</b></li><li>IV Status: <b class="'+ivClass(ivStatusFor(r))+'">'+esc(ivStatusFor(r))+'</b></li><li>Review Status: '+esc(r.reviewStatus || r.note || 'Candidate for manual review')+'</li></ul>';
   }
 
   function updateStats(data){
     var total = data.total || 0;
     var matched = data.matched || 0;
-    var returned = data.returned || (data.results ? data.results.length : 0);
+    var returned = currentRows.length || data.returned || (data.results ? data.results.length : 0);
     text('truthDataMode', data.filterMode || 'band-aware-preview-slice');
     text('truthLastScan', data.generatedAt ? new Date(data.generatedAt).toLocaleString() : '—');
     text('truthUniverse', (data.universeCount || '—') + ' symbols');
@@ -214,8 +194,8 @@
     var progress = data.progress || {};
     var buildText = data.building ? ' Scan still building' + (progress.scanned && progress.total ? ': ' + progress.scanned + ' of ' + progress.total + ' symbols scanned.' : '.') : ' Scan board ready.';
     if((data.returned || 0) > 0){
-      html('explanation','Loaded <strong>'+(data.returned||0).toLocaleString()+'</strong> rows from <strong>'+(data.matched||0).toLocaleString()+'</strong> candidates matching the current Band Intake values. '+buildText);
-      msgOut('Live rows loaded. '+(data.returned||0)+' returned; '+(data.matched||0)+' matched.', 'ok');
+      html('explanation','Loaded <strong>'+(currentRows.length||data.returned||0).toLocaleString()+'</strong> displayed rows from <strong>'+(data.matched||0).toLocaleString()+'</strong> candidates matching the current Band Intake values. '+buildText);
+      msgOut('Live rows loaded. '+(currentRows.length||data.returned||0)+' displayed; '+(data.matched||0)+' matched.', 'ok');
       return;
     }
     if((data.total || 0) > 0){
@@ -227,18 +207,43 @@
     msgOut('No scanner board is available yet. Fresh scan requested.', 'warn');
   }
 
+  function setupNextButton(){
+    var b=el('loadNextBtn');
+    var rescan=el('rescanBtn');
+    if(!b && rescan){ b=document.createElement('button'); b.id='loadNextBtn'; b.className='btn secondary'; rescan.insertAdjacentElement('afterend', b); }
+    if(!b) return;
+    var has = nextOffset !== null && nextOffset !== undefined;
+    b.style.display='inline-block';
+    b.disabled=!has;
+    b.textContent=has ? ('Load Next ' + LIMIT + ' Records') : 'All Records Loaded';
+    b.onclick=function(){ if(has) appendNextRows(); };
+  }
+
   async function loadBoard(){
     var rescan = el('rescanBtn');
     if(rescan){ rescan.disabled = true; rescan.textContent = 'Scanning…'; }
-    hideExtraControls(); injectUiFixes();
-    var q = readBandParams();
-    var data = await getJson('/.netlify/functions/scan-results-preview?' + q.toString(), 15000);
-    updateStats(data);
-    renderRows(data.results || []);
-    showStatus(data);
+    hideExtraControls(); injectUiFixes(); pageOffset = 0;
+    var data = await getJson('/.netlify/functions/scan-results-preview?' + readBandParams(0).toString(), 15000);
+    currentRows=[];
+    renderRows(data.results || [], false);
     nextOffset = data.nextOffset;
+    updateStats(data);
+    showStatus(data);
+    setupNextButton();
     if(rescan){ rescan.disabled = false; rescan.textContent = '↻ Re-scan Live Data'; }
     return data;
+  }
+
+  async function appendNextRows(){
+    if(nextOffset === null || nextOffset === undefined) return;
+    pageOffset = nextOffset;
+    var b=el('loadNextBtn'); if(b){ b.disabled=true; b.textContent='Loading…'; }
+    var data = await getJson('/.netlify/functions/scan-results-preview?' + readBandParams(pageOffset).toString(), 15000);
+    renderRows(data.results || [], true);
+    nextOffset = data.nextOffset;
+    updateStats(data);
+    showStatus(data);
+    setupNextButton();
   }
 
   async function startTimedScan(){
@@ -252,36 +257,27 @@
       if(rescan) rescan.textContent = 'Scanning… ' + clock(elapsed);
       try{
         var data = await loadBoard();
-        if((data.total || 0) > 0){
-          clearInterval(pollTimer); pollTimer = null;
-          if(rescan){ rescan.disabled = false; rescan.textContent = '↻ Re-scan Live Data'; }
-        }
+        if((data.total || 0) > 0){ clearInterval(pollTimer); pollTimer = null; }
       }catch(e){ console.warn('Waiting for scan board', e); }
-      if(elapsed >= 360){
-        clearInterval(pollTimer); pollTimer = null;
-        if(rescan){ rescan.disabled = false; rescan.textContent = '↻ Re-scan Live Data'; }
-      }
+      if(elapsed >= 360){ clearInterval(pollTimer); pollTimer = null; if(rescan){ rescan.disabled = false; rescan.textContent = '↻ Re-scan Live Data'; } }
     }, 10000);
   }
 
   async function rescan(){
-    pageOffset = 0;
     try{
       var data = await loadBoard();
       if(!(data.total || 0)) startTimedScan();
     }catch(e){
       console.warn(e);
       html('explanation','Unable to read the live board yet. Starting a fresh timed scan. Typical scan time is about 5 minutes.');
-      renderRows([]);
+      renderRows([], false);
       startTimedScan();
     }
   }
 
   function boot(){
-    injectUiFixes();
-    hideExtraControls();
-    var btn = el('rescanBtn');
-    if(btn) btn.onclick = rescan;
+    injectUiFixes(); hideExtraControls(); setupNextButton();
+    var btn = el('rescanBtn'); if(btn) btn.onclick = rescan;
     html('explanation','Loading scanner using the default Band Intake values. After changing any Band field, press <strong>Re-scan Live Data</strong>.');
     setTimeout(rescan, 300);
   }
