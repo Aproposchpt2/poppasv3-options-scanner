@@ -1,6 +1,6 @@
 // POPPA'S Option Scanner v3 — preview-safe live results endpoint.
-// Returns an unfiltered slice of the cached scanner board so the preview page can render live data
-// without attempting to download the full 100k+ row board in one browser request.
+// Returns a true lightweight slice of the cached scanner board.
+// Critical rule: slice first, then normalize only the requested rows.
 
 import { getStore } from "@netlify/blobs";
 
@@ -78,7 +78,7 @@ function normalizedRow(r) {
   };
 }
 
-function sortRows(rows, rankBy = "edge", passersTop = false) {
+function lightweightSort(rows, rankBy = "edge", passersTop = false) {
   return rows.sort((a, b) => {
     if (passersTop && (b.passed ? 1 : 0) - (a.passed ? 1 : 0)) return (b.passed ? 1 : 0) - (a.passed ? 1 : 0);
     if (rankBy === "roc") return rocOf(b) - rocOf(a);
@@ -90,7 +90,7 @@ function sortRows(rows, rankBy = "edge", passersTop = false) {
 
 export default async (req) => {
   const q = (() => { try { return new URL(req.url).searchParams; } catch (_) { return new URLSearchParams(); } })();
-  const limit = Math.min(Math.max(parseInt(q.get("limit") || "5000", 10) || 5000, 1), 10000);
+  const limit = Math.min(Math.max(parseInt(q.get("limit") || "25", 10) || 25, 1), 1000);
   const offset = Math.max(parseInt(q.get("offset") || "0", 10) || 0, 0);
   const rankBy = q.get("rankBy") || "edge";
   const passersTop = q.get("passersTop") === "yes" || q.get("passersTop") === "true";
@@ -113,16 +113,23 @@ export default async (req) => {
       returned: 0,
       offset,
       limit,
+      hasMore: false,
+      nextOffset: null,
       filterMode: "unfiltered-preview-slice",
       serverFiltersRemoved: true,
+      processingMode: "slice-first",
       userMessage: "Scanner board is not available yet. A build was requested.",
       results: []
     }, 30);
   }
 
   const totalRows = board.results.length;
-  const sorted = sortRows(board.results.map(normalizedRow), rankBy, passersTop);
-  const rows = sorted.slice(offset, offset + limit);
+
+  // Critical performance fix:
+  // Take the requested slice FIRST. Do not normalize/sort the entire 100k+ board.
+  const rawSlice = board.results.slice(offset, offset + limit);
+  const rows = lightweightSort(rawSlice.map(normalizedRow), rankBy, passersTop);
+  const hasMore = offset + limit < totalRows;
 
   return json({
     ok: true,
@@ -142,12 +149,15 @@ export default async (req) => {
     offset,
     limit,
     hasRows: rows.length > 0,
+    hasMore,
+    nextOffset: hasMore ? offset + limit : null,
     previewSlice: true,
+    processingMode: "slice-first",
     filterMode: "unfiltered-preview-slice",
     serverFiltersRemoved: true,
     userMessage: board.building
-      ? "Live board rows are available while the scan is still finalizing. Displaying a preview-safe unfiltered slice."
-      : "Live board is ready. Displaying a preview-safe unfiltered slice.",
+      ? "Live board rows are available while the scan is still finalizing. Displaying a true slice-first preview page."
+      : "Live board is ready. Displaying a true slice-first preview page.",
     results: rows
   }, board.building ? 30 : 300);
 };
