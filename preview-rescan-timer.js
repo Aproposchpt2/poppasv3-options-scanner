@@ -1,5 +1,6 @@
-// POPPA'S preview scanner controller — Supabase-backed.
-// Single-record CTA workflow: Load Next / Records Still Loading / All Records Loaded.
+// POPPA'S preview scanner controller — Supabase-backed paged UX.
+// Render/refresh pulls first 50. User CTA pulls the next 50.
+// CTA workflow: Scan Next 50 / Records Still Loading / All Records Loaded.
 (function(){
   var RESULTS_ENDPOINT = '/.netlify/functions/scan-results-db';
   var FORCE_ENDPOINT = '/.netlify/functions/force-scan-db';
@@ -7,7 +8,6 @@
   var nextOffset = null;
   var currentRows = [];
   var lastScanData = null;
-  var buildMonitor = null;
   var filterDebounce = null;
   var sortState = { key: null, dir: 1 };
 
@@ -60,7 +60,7 @@
     var dte = readDte();
     var width = val('spreadWidth','5');
     var q = new URLSearchParams();
-    LIMIT = parseInt(val('maxResults','50'),10) || 50;
+    LIMIT = 50;
     q.set('limit', String(LIMIT));
     q.set('offset', String(offset || 0));
     q.set('rocMin', val('rocMin','5'));
@@ -180,7 +180,7 @@
     var p=findTicketPanel();
     if(!p) return;
     if(!r){
-      p.innerHTML='<p class="eyebrow">Order Ticket · 4-Leg Iron Condor</p><h2 class="title">Tap a result to build the ticket.</h2><div class="note">Rows will populate as the Supabase scan writes candidates.</div>';
+      p.innerHTML='<p class="eyebrow">Order Ticket · 4-Leg Iron Condor</p><h2 class="title">Tap a result to build the ticket.</h2><div class="note">Rows load 50 at a time from the latest Supabase EOD dataset.</div>';
       return;
     }
     var risk = r.maxRisk != null ? Number(r.maxRisk) : (r.width != null && r.credit != null ? Number(r.width)-Number(r.credit) : Number(r.risk || 0));
@@ -210,14 +210,14 @@
 
   function showStatus(data){
     var progress = data.progress || {};
-    var buildText = data.building ? ' Scan still building' + (progress.scanned && progress.total ? ': ' + progress.scanned + ' of ' + progress.total + ' symbols scanned.' : '.') : ' Scan board ready.';
+    var buildText = data.building ? ' Dataset still building' + (progress.scanned && progress.total ? ': ' + progress.scanned + ' of ' + progress.total + ' symbols scanned.' : '.') : ' Dataset ready.';
     if(data.noScan){
       html('explanation','No Supabase scan exists yet. Starting the first preview scan now.');
       msgOut('Starting Supabase scan.', 'warn');
       return;
     }
     if((data.returned || 0) > 0){
-      html('explanation','Loaded <strong>'+(currentRows.length||data.returned||0).toLocaleString()+'</strong> displayed rows from <strong>'+(data.matched||0).toLocaleString()+'</strong> candidates matching the current Band Intake values. '+buildText);
+      html('explanation','Loaded <strong>'+(currentRows.length||data.returned||0).toLocaleString()+'</strong> displayed rows from <strong>'+(data.matched||0).toLocaleString()+'</strong> candidates matching the current Band Intake values. Use <strong>Scan Next 50</strong> to pull the next page. '+buildText);
       msgOut('Supabase rows loaded. '+(currentRows.length||data.returned||0)+' displayed; '+(data.matched||0)+' matched.', 'ok');
       return;
     }
@@ -240,7 +240,7 @@
     b.style.display='inline-block';
     if(has){
       b.disabled=false;
-      b.textContent='Load Next ' + LIMIT + ' Records';
+      b.textContent='Scan Next ' + LIMIT;
       b.onclick=function(){ appendNextRows(); };
     } else if(building){
       b.disabled=true;
@@ -263,28 +263,14 @@
     updateStats(data);
     showStatus(data);
     setupNextButton();
-    monitorBuild(data);
     return data;
   }
 
   async function appendNextRows(){
     if(nextOffset === null || nextOffset === undefined) return;
-    var b=el('loadNextBtn'); if(b){ b.disabled=true; b.textContent='Loading…'; }
+    var b=el('loadNextBtn'); if(b){ b.disabled=true; b.textContent='Scanning Next ' + LIMIT + '…'; }
     try{ await loadBoard(true, nextOffset); }
-    catch(e){ console.warn(e); msgOut('Unable to load next records from Supabase.', 'warn'); setupNextButton(); }
-  }
-
-  function monitorBuild(data){
-    if(!data || (!data.building && !data.noScan)){ if(buildMonitor){ clearInterval(buildMonitor); buildMonitor=null; } return; }
-    if(buildMonitor) return;
-    buildMonitor=setInterval(async function(){
-      try{
-        var status=await getJson(FORCE_ENDPOINT + '?status=1&_ts=' + Date.now(), 15000);
-        if(status && (status.status === 'empty' || status.building || status.stale)) await postScan(status.stale ? 'continue' : 'start');
-        await loadBoard(false, 0);
-        if(lastScanData && !lastScanData.building && !lastScanData.noScan){ clearInterval(buildMonitor); buildMonitor=null; }
-      }catch(e){ console.warn('Supabase build monitor wait',e); }
-    },20000);
+    catch(e){ console.warn(e); msgOut('Unable to scan next 50 records from Supabase.', 'warn'); setupNextButton(); }
   }
 
   function valueForSort(r, key){
@@ -338,13 +324,12 @@
 
   async function boot(){
     injectUiFixes(); hideExtraControls(); ensureIvAll(); setupNextButton(); bindHeaderSort(); bindBandChanges();
-    html('explanation','Loading scanner rows from Supabase using the default Band Intake values.');
+    html('explanation','Loading the first 50 scanner rows from Supabase using the default Band Intake values.');
     try{ await loadBoard(false,0); }
     catch(e){
       console.warn(e);
       html('explanation','Supabase read endpoint is not ready yet. Starting the Supabase scan controller.');
       await postScan('start');
-      monitorBuild({ building:true });
     }
   }
 
