@@ -1,0 +1,139 @@
+name: Patch Sort And Load Next UX
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-sort-and-load-next-ux.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch preview controller sort and CTA behavior
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('preview-rescan-timer.js')
+          s = p.read_text(encoding='utf-8')
+
+          if 'var lastScanData = null;' not in s:
+              s = s.replace('var currentRows = [];', 'var currentRows = [];\n  var lastScanData = null;')
+
+          # Replace the existing setupNextButton function with a building-aware single CTA state machine.
+          start = s.index('  function setupNextButton(){')
+          end = s.index('\n  async function loadBoard(){', start)
+          setup = '''  function setupNextButton(){
+    var b=el('loadNextBtn');
+    var rescan=el('rescanBtn');
+    if(!b && rescan){ b=document.createElement('button'); b.id='loadNextBtn'; b.className='btn secondary'; rescan.insertAdjacentElement('afterend', b); }
+    if(!b && !rescan) return;
+    if(rescan){
+      rescan.style.display='none';
+      rescan.disabled=true;
+    }
+    b = b || rescan;
+    if(!b) return;
+    var has = nextOffset !== null && nextOffset !== undefined;
+    var building = !!(lastScanData && lastScanData.building);
+    b.style.display='inline-block';
+    if(has){
+      b.disabled=false;
+      b.textContent='Load Next ' + LIMIT + ' Records';
+      b.onclick=function(){ appendNextRows(); };
+    } else if(building){
+      b.disabled=true;
+      b.textContent='Records Still Loading';
+      b.onclick=null;
+    } else {
+      b.disabled=true;
+      b.textContent='All Records Loaded';
+      b.onclick=null;
+    }
+  }
+
+'''
+          s = s[:start] + setup + s[end+1:]
+
+          # Store latest response before button state is evaluated.
+          s = s.replace('nextOffset = data.nextOffset;\n    updateStats(data);', 'nextOffset = data.nextOffset;\n    lastScanData = data;\n    updateStats(data);')
+
+          # Insert header-sort override if not present.
+          if 'function bindHeaderSorts(){' not in s:
+              marker = '  function bindRows(){'
+              sort_helper = '''  function sortKey(row, idx){
+    var ivs = ivStatusFor(row);
+    var ems = row.expectedMoveStatus || row.emStatus || '';
+    var prob = row.prob != null ? row.prob : (row.probOtm != null ? Math.round(Number(row.probOtm)*100) : null);
+    var values = [
+      0,
+      row.symbol || '',
+      row.sector || row.market || '',
+      Number(row.spot || 0),
+      Number(row.dte || 0),
+      row.nextEarnings || row.earningsDate || '',
+      Number(row.iv || 0),
+      Number(row.expectedMove || 0),
+      ems,
+      ivs,
+      Number(row.openInterest || row.monthlyOI || row.oi || 0),
+      Number(prob || 0),
+      Number(row.credit || 0),
+      Number(row.width != null && row.credit != null ? Number(row.width)-Number(row.credit) : row.risk || 0),
+      Number(row.roc || 0),
+      Number(row.spreadMax || 0),
+      row.reviewStatus || row.note || ''
+    ];
+    return values[idx];
+  }
+
+  function sortCurrentRows(idx, th){
+    if(!currentRows || !currentRows.length) return;
+    var dir = th.getAttribute('data-preview-dir') === 'asc' ? 'desc' : 'asc';
+    Array.prototype.forEach.call(document.querySelectorAll('th'), function(h){ h.removeAttribute('data-preview-dir'); h.classList.remove('asc','desc'); });
+    th.setAttribute('data-preview-dir', dir);
+    th.classList.add(dir);
+    currentRows.sort(function(a,b){
+      var av=sortKey(a,idx), bv=sortKey(b,idx);
+      if(typeof av === 'number' && typeof bv === 'number') return dir==='asc' ? av-bv : bv-av;
+      av=String(av).toLowerCase(); bv=String(bv).toLowerCase();
+      return dir==='asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+    renderRows(currentRows, false);
+  }
+
+  function bindHeaderSorts(){
+    Array.prototype.forEach.call(document.querySelectorAll('th'), function(th, idx){
+      if(th.getAttribute('data-preview-sort-bound') === 'yes') return;
+      th.setAttribute('data-preview-sort-bound','yes');
+      th.addEventListener('click', function(e){
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        sortCurrentRows(idx, th);
+        return false;
+      }, true);
+    });
+  }
+
+'''
+              s = s.replace(marker, sort_helper + marker)
+
+          # Ensure sort header binding happens after render and boot.
+          s = s.replace('bindRows();\n    selectRow(0);', 'bindRows();\n    bindHeaderSorts();\n    selectRow(0);')
+          s = s.replace('injectUiFixes(); hideExtraControls(); setupNextButton();', 'injectUiFixes(); hideExtraControls(); bindHeaderSorts(); setupNextButton();')
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add preview-rescan-timer.js
+          git commit -m "Fix sort persistence and next-records CTA state"
+          git push
