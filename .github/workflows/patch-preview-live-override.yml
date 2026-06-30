@@ -1,0 +1,115 @@
+name: Patch Preview Live Override
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-preview-live-override.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Append live data override script
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('scanner-table-preview.html')
+          s = p.read_text(encoding='utf-8')
+          marker = 'POPPA_LIVE_OVERRIDE_V1'
+
+          override = r'''
+<script id="POPPA_LIVE_OVERRIDE_V1">
+(function(){
+  const LIMIT = 500;
+  let offset = 0;
+  let total = 0;
+  let nextOffset = null;
+
+  function q(id){ return document.getElementById(id); }
+  function setStatus(text, cls){ try { msg(text, cls || 'ok'); } catch(e) { console.log(text); } }
+  function setLoadButton(){
+    let b = q('loadNextBtn');
+    if(!b){
+      const reset = q('resetBtn');
+      if(reset){
+        b = document.createElement('button');
+        b.className = 'btn secondary';
+        b.id = 'loadNextBtn';
+        reset.insertAdjacentElement('afterend', b);
+      }
+    }
+    if(!b) return;
+    const has = nextOffset !== null && nextOffset !== undefined;
+    b.disabled = !has;
+    b.textContent = has ? 'Load Next 500 Records' : 'All Records Loaded';
+    b.onclick = function(){ if(has){ offset = nextOffset; loadLive(true); } };
+  }
+
+  async function loadLive(append){
+    try{
+      setStatus((append ? 'Loading next 500 live records…' : 'Loading first 500 live records…'), 'warn');
+      const url = '/.netlify/functions/scan-results-preview?limit=' + LIMIT + '&offset=' + offset + '&_ts=' + Date.now();
+      const res = await fetch(url, { cache:'no-store' });
+      const data = await res.json();
+      if(!data || !Array.isArray(data.results) || !data.results.length) throw new Error('No rows returned from preview endpoint');
+
+      const incoming = data.results.map(map);
+      if(append) allRows = allRows.concat(incoming); else allRows = incoming;
+
+      total = data.total || data.matched || allRows.length;
+      nextOffset = (data.nextOffset !== undefined && data.nextOffset !== null) ? data.nextOffset : (data.hasMore ? offset + LIMIT : null);
+
+      if(q('universeCount')) q('universeCount').textContent = data.universeCount || '—';
+      if(q('pulledCount')) q('pulledCount').textContent = data.scanned || '—';
+      if(q('condorCount')) q('condorCount').textContent = data.withCondor || data.total || allRows.length;
+      if(q('activeMatches')) q('activeMatches').textContent = allRows.length.toLocaleString();
+      if(q('truthDataMode')) q('truthDataMode').textContent = data.filterMode || 'Live preview slice';
+      if(q('truthLastScan')) q('truthLastScan').textContent = data.generatedAt ? new Date(data.generatedAt).toLocaleString() : '—';
+      if(q('truthUniverse')) q('truthUniverse').textContent = (data.universeCount || '—') + ' symbols';
+      if(q('truthBuild')) q('truthBuild').textContent = data.building ? 'Finalizing with live rows' : 'Ready';
+      if(q('explanation')) q('explanation').textContent = 'Loaded ' + allRows.length.toLocaleString() + ' of ' + total.toLocaleString() + ' live records before display filtering. ' + (data.userMessage || '');
+
+      setLoadButton();
+      apply();
+      if(typeof lastRows !== 'undefined' && lastRows.length && typeof showTicket === 'function') showTicket(0);
+      setStatus('Live board loaded. ' + allRows.length.toLocaleString() + ' of ' + total.toLocaleString() + ' records available in the table.', 'ok');
+    }catch(err){
+      console.error('POPPA live override failed:', err);
+      setStatus('Live endpoint failed in page loader. Endpoint may still work directly; check browser console/network.', 'warn');
+    }
+  }
+
+  function boot(){
+    const run = q('runScanBtn');
+    if(run){ run.disabled = false; run.onclick = function(){ offset=0; nextOffset=null; allRows=[]; setLoadButton(); loadLive(false); }; }
+    setLoadButton();
+    loadLive(false);
+  }
+
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else setTimeout(boot, 250);
+})();
+</script>
+'''
+
+          if marker in s:
+            print('Override already present.')
+          else:
+            s = s.replace('</body>', override + '</body>', 1)
+            p.write_text(s, encoding='utf-8')
+            print('Live override appended.')
+          PY
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add scanner-table-preview.html
+          git commit -m "Install preview live data override"
+          git push
