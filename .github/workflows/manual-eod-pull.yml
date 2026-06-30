@@ -1,0 +1,24 @@
+name: Manual EOD Pull
+
+on:
+  push:
+    paths:
+      - '.github/workflows/manual-eod-pull.yml'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Netlify endpoint
+        run: |
+          python - <<'PY'
+          import json, urllib.request
+          url = 'https://poppasv2.ai4academy.net/.netlify/functions/daily-eod-scan'
+          req = urllib.request.Request(url, method='POST', headers={'Accept':'application/json'})
+          with urllib.request.urlopen(req, timeout=120) as r:
+              body = r.read().decode('utf-8', 'replace')
+              print(body)
+              if r.status >= 400:
+                  raise SystemExit(r.status)
+          PY
