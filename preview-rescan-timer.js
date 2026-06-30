@@ -6,6 +6,10 @@
   var nextOffset = null;
   var pollTimer = null;
   var currentRows = [];
+  var lastScanData = null;
+  var buildMonitor = null;
+  var lastProgressKey = "";
+  var stalledPolls = 0;
 
   function el(id){ return document.getElementById(id); }
   function text(id, value){ var x=el(id); if(x) x.textContent = value; }
@@ -211,12 +215,24 @@
     var b=el('loadNextBtn');
     var rescan=el('rescanBtn');
     if(!b && rescan){ b=document.createElement('button'); b.id='loadNextBtn'; b.className='btn secondary'; rescan.insertAdjacentElement('afterend', b); }
+    if(rescan){ rescan.style.display='none'; rescan.disabled=true; }
     if(!b) return;
     var has = nextOffset !== null && nextOffset !== undefined;
+    var building = !!(lastScanData && lastScanData.building);
     b.style.display='inline-block';
-    b.disabled=!has;
-    b.textContent=has ? ('Load Next ' + LIMIT + ' Records') : 'All Records Loaded';
-    b.onclick=function(){ if(has) appendNextRows(); };
+    if(has){
+      b.disabled=false;
+      b.textContent='Load Next ' + LIMIT + ' Records';
+      b.onclick=function(){ appendNextRows(); };
+    } else if(building){
+      b.disabled=true;
+      b.textContent='Records Still Loading';
+      b.onclick=null;
+    } else {
+      b.disabled=true;
+      b.textContent='All Records Loaded';
+      b.onclick=null;
+    }
   }
 
   async function loadBoard(){
@@ -227,9 +243,11 @@
     currentRows=[];
     renderRows(data.results || [], false);
     nextOffset = data.nextOffset;
+    lastScanData = data;
     updateStats(data);
     showStatus(data);
     setupNextButton();
+    monitorBuild(data);
     if(rescan){ rescan.disabled = false; rescan.textContent = '↻ Re-scan Live Data'; }
     return data;
   }
@@ -241,9 +259,29 @@
     var data = await getJson('/.netlify/functions/scan-results-preview?' + readBandParams(pageOffset).toString(), 15000);
     renderRows(data.results || [], true);
     nextOffset = data.nextOffset;
+    lastScanData = data;
     updateStats(data);
     showStatus(data);
     setupNextButton();
+  }
+
+  async function continueBuild(){
+    try{ await fetch('/.netlify/functions/force-eod-pull?action=continue',{method:'POST',cache:'no-store'}); }catch(e){ console.warn(e); }
+  }
+  function buildKey(data){ var p=(data&&data.progress)||{}; return String(p.scanned||data.scanned||'')+'/'+String(p.total||data.universeCount||'')+'/'+String(data.total||''); }
+  function monitorBuild(data){
+    if(!data || !data.building){ if(buildMonitor){ clearInterval(buildMonitor); buildMonitor=null; } return; }
+    if(buildMonitor) return;
+    lastProgressKey=buildKey(data); stalledPolls=0;
+    buildMonitor=setInterval(async function(){
+      try{
+        var status=await getJson('/.netlify/functions/force-eod-pull?status=1&_ts='+Date.now(),12000);
+        var key=String(status && status.progress && status.progress.scanned || status && status.scanned || '')+'/'+String(status && status.progress && status.progress.total || status && status.universeCount || '')+'/'+String(status && status.latestResults || '');
+        if(key===lastProgressKey) stalledPolls++; else { stalledPolls=0; lastProgressKey=key; }
+        if(stalledPolls>=1 || String(status && status.recommendation || '').indexOf('STALE')>=0){ await continueBuild(); stalledPolls=0; }
+        await loadBoard();
+      }catch(e){ console.warn('build monitor wait',e); }
+    },20000);
   }
 
   async function startTimedScan(){
