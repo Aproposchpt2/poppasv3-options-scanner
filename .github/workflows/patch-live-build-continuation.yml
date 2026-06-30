@@ -1,0 +1,55 @@
+name: Patch Live Build Continuation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-live-build-continuation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch controller build continuation
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('preview-rescan-timer.js')
+          s=p.read_text(encoding='utf-8')
+
+          if 'var lastScanData = null;' not in s:
+              s=s.replace('var currentRows = [];', 'var currentRows = [];\n  var lastScanData = null;\n  var buildMonitor = null;\n  var lastProgressKey = "";\n  var stalledPolls = 0;')
+
+          # Ensure last response is saved before CTA setup.
+          s=s.replace('nextOffset = data.nextOffset;\n    updateStats(data);', 'nextOffset = data.nextOffset;\n    lastScanData = data;\n    updateStats(data);')
+
+          # Replace setupNextButton with building-aware labels.
+          if 'function setupNextButton(){' in s:
+              start=s.index('  function setupNextButton(){')
+              end=s.index('\n  async function loadBoard(){', start)
+              new='''  function setupNextButton(){\n    var b=el('loadNextBtn');\n    var rescan=el('rescanBtn');\n    if(!b && rescan){ b=document.createElement('button'); b.id='loadNextBtn'; b.className='btn secondary'; rescan.insertAdjacentElement('afterend', b); }\n    if(rescan){ rescan.style.display='none'; rescan.disabled=true; }\n    if(!b) return;\n    var has = nextOffset !== null && nextOffset !== undefined;\n    var building = !!(lastScanData && lastScanData.building);\n    b.style.display='inline-block';\n    if(has){\n      b.disabled=false;\n      b.textContent='Load Next ' + LIMIT + ' Records';\n      b.onclick=function(){ appendNextRows(); };\n    } else if(building){\n      b.disabled=true;\n      b.textContent='Records Still Loading';\n      b.onclick=null;\n    } else {\n      b.disabled=true;\n      b.textContent='All Records Loaded';\n      b.onclick=null;\n    }\n  }\n\n'''
+              s=s[:start]+new+s[end+1:]
+
+          helper='''\n  async function continueBuild(){\n    try{ await fetch('/.netlify/functions/force-eod-pull?action=continue',{method:'POST',cache:'no-store'}); }catch(e){ console.warn(e); }\n  }\n  function buildKey(data){ var p=(data&&data.progress)||{}; return String(p.scanned||data.scanned||'')+'/'+String(p.total||data.universeCount||'')+'/'+String(data.total||''); }\n  function monitorBuild(data){\n    if(!data || !data.building){ if(buildMonitor){ clearInterval(buildMonitor); buildMonitor=null; } return; }\n    if(buildMonitor) return;\n    lastProgressKey=buildKey(data); stalledPolls=0;\n    buildMonitor=setInterval(async function(){\n      try{\n        var status=await getJson('/.netlify/functions/force-eod-pull?status=1&_ts='+Date.now(),12000);\n        var key=String(status && status.progress && status.progress.scanned || status && status.scanned || '')+'/'+String(status && status.progress && status.progress.total || status && status.universeCount || '')+'/'+String(status && status.latestResults || '');\n        if(key===lastProgressKey) stalledPolls++; else { stalledPolls=0; lastProgressKey=key; }\n        if(stalledPolls>=1 || String(status && status.recommendation || '').indexOf('STALE')>=0){ await continueBuild(); stalledPolls=0; }\n        await loadBoard();\n      }catch(e){ console.warn('build monitor wait',e); }\n    },20000);\n  }\n'''
+          if 'function monitorBuild(data){' not in s:
+              s=s.replace('\n  async function startTimedScan(){', helper+'\n  async function startTimedScan(){')
+
+          # Call monitorBuild after loadBoard and appendNextRows responses.
+          s=s.replace('setupNextButton();\n    if(rescan){ rescan.disabled = false;', 'setupNextButton();\n    monitorBuild(data);\n    if(rescan){ rescan.disabled = false;')
+          s=s.replace('setupNextButton();\n  }\n\n  async function startTimedScan', 'setupNextButton();\n    monitorBuild(data);\n  }\n\n  async function startTimedScan')
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add preview-rescan-timer.js
+          git commit -m "Continue stalled live scan from preview controller"
+          git push
