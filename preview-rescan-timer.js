@@ -24,7 +24,14 @@
     if(document.getElementById('preview-supabase-css')) return;
     var st=document.createElement('style');
     st.id='preview-supabase-css';
-    st.textContent='.table-wrap{position:relative}.table-wrap th{position:sticky;top:0;z-index:8;background:#061225}.em-out{color:var(--green)!important;font-weight:900}.em-near{color:var(--amber)!important;font-weight:900}.em-in{color:var(--red)!important;font-weight:900}.iv-inflated{color:var(--amber);font-weight:900}.iv-fair{color:var(--green);font-weight:900}.iv-deflated{color:var(--red);font-weight:900}.result-row{cursor:pointer}.result-row.row-active td{background:rgba(123,220,255,.13)!important;box-shadow:inset 3px 0 0 var(--cyan)}#loadNextBtn{display:inline-block!important;margin-left:10px}';
+    st.textContent='\
+.table-wrap{position:relative;overflow:auto!important;max-height:78vh;-webkit-overflow-scrolling:touch;scrollbar-gutter:stable;border:1px solid var(--line);border-radius:14px}\
+.table-wrap table{border-collapse:separate!important;border-spacing:0}\
+.table-wrap thead{position:sticky;top:0;z-index:30}\
+.table-wrap thead th,.table-wrap th{position:sticky!important;top:0!important;z-index:40!important;background:#061225!important;color:var(--muted);box-shadow:0 2px 0 var(--line),0 10px 18px rgba(0,0,0,.35);background-clip:padding-box}\
+.table-wrap thead th:first-child,.table-wrap th:first-child{left:0;z-index:45!important}\
+.em-out{color:var(--green)!important;font-weight:900}.em-near{color:var(--amber)!important;font-weight:900}.em-in{color:var(--red)!important;font-weight:900}.iv-inflated{color:var(--amber);font-weight:900}.iv-fair{color:var(--green);font-weight:900}.iv-deflated{color:var(--red);font-weight:900}.result-row{cursor:pointer}.result-row.row-active td{background:rgba(123,220,255,.13)!important;box-shadow:inset 3px 0 0 var(--cyan)}#loadNextBtn{display:inline-block!important;margin-left:10px}\
+@media(max-width:620px){.table-wrap{max-height:70vh}.table-wrap thead th,.table-wrap th{top:0!important;font-size:.62rem;line-height:1.2}}';
     document.head.appendChild(st);
   }
 
