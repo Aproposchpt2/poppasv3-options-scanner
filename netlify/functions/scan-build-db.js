@@ -6,7 +6,6 @@
 const CHUNK = 8;
 const CONCURRENCY = 2;
 const MAX_RUN_MS = 20 * 1000;
-const CONTINUE_TIMEOUT_MS = 2500;
 const SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv";
 const STRATEGY = "SP500_Tight_Condor_Scan_v3_RawMonthlyFirst";
 const SCAN_MODE = "CBOE EOD · Monthly option chain only · 15-45 DTE · Supabase persistence";
@@ -233,7 +232,7 @@ async function candidateCount(scanRunId) { return sbCount("scan_candidates", `sc
 async function createRun() {
   const universe = await loadUniverse();
   const earnings = await loadEarnings(90);
-  const body = [{ strategy: STRATEGY, status: "running", scan_mode: SCAN_MODE, data_source: DATA_SOURCE, universe_count: universe.length, scanned_count: 0, candidate_count: 0, pass_count: 0, pending_index: 0, metadata: { universe, earnings, createdBy: "scan-build-db-rest", backendFiltersRemoved: true, upstreamFiltersOnly: UPSTREAM_FILTERS_ONLY, autoFillMode: "short-batch-self-continuation" } }];
+  const body = [{ strategy: STRATEGY, status: "running", scan_mode: SCAN_MODE, data_source: DATA_SOURCE, universe_count: universe.length, scanned_count: 0, candidate_count: 0, pass_count: 0, pending_index: 0, metadata: { universe, earnings, createdBy: "scan-build-db-rest", backendFiltersRemoved: true, upstreamFiltersOnly: UPSTREAM_FILTERS_ONLY, autoFillMode: "short-batch-supabase-queue" } }];
   const { data } = await sbFetch("scan_runs?select=*", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) });
   return data[0];
 }
@@ -242,19 +241,15 @@ async function loadRun(restart) { if (restart) return createRun(); const active 
 async function updateRun(id, updates) { await sbFetch(`scan_runs?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(updates) }); }
 function baseUrl(req) { try { const u = new URL(req.url); return process.env.URL || process.env.DEPLOY_URL || `${u.protocol}//${u.host}`; } catch (_) { return process.env.URL || process.env.DEPLOY_URL || ""; } }
 
-async function triggerContinuation(req, scanRunId) {
+async function enqueueContinuation(req, scanRunId) {
   const base = baseUrl(req);
   if (!base) return { queued: false, reason: "no-base-url" };
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), CONTINUE_TIMEOUT_MS);
   const endpoint = `${base}/.netlify/functions/scan-build-db?continue=1&scanRunId=${encodeURIComponent(scanRunId)}`;
   try {
-    fetch(endpoint, { method: "POST", headers: { accept: "application/json" }, signal: ctrl.signal }).catch(() => {});
-    return { queued: true, endpoint };
+    const { data } = await sbFetch("rpc/enqueue_scan_continue", { method: "POST", body: JSON.stringify({ p_url: endpoint }) });
+    return { queued: true, requestId: data, endpoint, queue: "supabase-pg-net" };
   } catch (err) {
-    return { queued: false, error: String(err?.message || err), endpoint };
-  } finally {
-    setTimeout(() => clearTimeout(t), CONTINUE_TIMEOUT_MS + 100);
+    return { queued: false, error: String(err?.message || err), endpoint, queue: "supabase-pg-net" };
   }
 }
 
@@ -296,14 +291,14 @@ export default async (req) => {
       pending += batch.length;
       batchesProcessed++;
       const count = await candidateCount(run.id);
-      await updateRun(run.id, { status: pending >= total ? "completed" : "running", universe_count: total, scanned_count: scanned, pending_index: pending, candidate_count: count, pass_count: count, completed_at: pending >= total ? new Date().toISOString() : null, error: null, metadata: { ...(run.metadata || {}), universe, earnings, backendFiltersRemoved: true, upstreamFiltersOnly: UPSTREAM_FILTERS_ONLY, autoFillMode: "short-batch-self-continuation", batchSize: CHUNK, concurrency: CONCURRENCY, maxRunMs: MAX_RUN_MS, batchesProcessed, lastSymbolBatchSize: batch.length, lastGeneratedRows: lastBatchRows, lastInsertedRows, lastContinuationAt: new Date().toISOString() } });
+      await updateRun(run.id, { status: pending >= total ? "completed" : "running", universe_count: total, scanned_count: scanned, pending_index: pending, candidate_count: count, pass_count: count, completed_at: pending >= total ? new Date().toISOString() : null, error: null, metadata: { ...(run.metadata || {}), universe, earnings, backendFiltersRemoved: true, upstreamFiltersOnly: UPSTREAM_FILTERS_ONLY, autoFillMode: "short-batch-supabase-queue", batchSize: CHUNK, concurrency: CONCURRENCY, maxRunMs: MAX_RUN_MS, batchesProcessed, lastSymbolBatchSize: batch.length, lastGeneratedRows: lastBatchRows, lastInsertedRows, lastContinuationAt: new Date().toISOString() } });
     }
   } catch (err) {
     try { await updateRun(run.id, { status: "failed", error: String(err?.message || err) }); } catch (_) {}
     return json({ ok: false, scanRunId: run.id, error: String(err?.message || err) }, 500);
   }
   const complete = pending >= total;
-  const continuation = complete ? { queued: false, reason: "complete" } : await triggerContinuation(req, run.id);
+  const continuation = complete ? { queued: false, reason: "complete" } : await enqueueContinuation(req, run.id);
   const count = await candidateCount(run.id);
   return json({ ok: true, scanRunId: run.id, status: complete ? "completed" : "running", scanned, total, pendingIndex: pending, candidateCount: count || 0, lastBatchRows, lastInsertedRows, batchesProcessed, continuation, backendFiltersRemoved: true, upstreamFiltersOnly: UPSTREAM_FILTERS_ONLY, framework: "v3 raw monthly-chain first · Supabase REST persistence" });
 };
