@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>POPPA’S Order Ticket Change Preview</title>
+  <style>
+    :root{--bg:#020816;--panel:#111a2b;--panel2:#17263c;--line:rgba(191,214,255,.25);--muted:#8fa7d1;--cyan:#79dcff;--gold:#d5ae55;--green:#3ee391;--amber:#f2b447;--white:#fff;--font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    *{box-sizing:border-box;margin:0;padding:0}body{font-family:var(--font);background:radial-gradient(circle at 70% 0%,#102d55 0%,#020816 45%,#00040c 100%);color:#dce8ff;line-height:1.5;min-height:100vh}.wrap{width:min(1380px,calc(100% - 32px));margin:auto}.top{position:sticky;top:0;z-index:5;background:rgba(2,8,22,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--line);padding:14px 0}.nav{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.brand{display:flex;gap:12px;align-items:center}.mark{width:42px;height:42px;border:1px solid rgba(213,174,85,.75);border-radius:12px;display:grid;place-items:center;color:#fff;font-weight:900}.title{font-weight:900;color:#fff}.sub{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:800}.badge{border:1px solid var(--line);border-radius:999px;padding:8px 13px;text-transform:uppercase;letter-spacing:.14em;font-size:.7rem;font-weight:900}.panel{background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.035));border:1px solid var(--line);border-radius:18px;padding:20px;margin:22px 0}.eyebrow{color:var(--gold);letter-spacing:.18em;text-transform:uppercase;font-size:.72rem;font-weight:900;margin-bottom:6px}h1,h2{color:#fff;line-height:1.12}h1{font-size:1.8rem}.note{border-left:3px solid var(--cyan);background:rgba(123,220,255,.08);padding:12px 14px;border-radius:0 10px 10px 0;margin:14px 0}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}.btn{border:0;border-radius:8px;padding:12px 18px;font-weight:900;text-transform:uppercase;letter-spacing:.12em;cursor:pointer}.btn.primary{background:#fff;color:#03101f}.btn.secondary{background:rgba(255,255,255,.07);border:1px solid var(--line);color:#fff}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px;max-height:420px}table{width:100%;border-collapse:collapse;min-width:940px}th,td{padding:11px 12px;border-bottom:1px solid var(--line);text-align:left}th{background:#061225;color:var(--muted);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;position:sticky;top:0}td{font-size:.92rem}.row{cursor:pointer}.row:hover td,.row.active td{background:rgba(123,220,255,.1)}.ticket{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}.card{border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.045);padding:14px}.card span{display:block;color:var(--cyan);font-weight:900;font-size:.68rem;letter-spacing:.12em;text-transform:uppercase}.card strong{display:block;color:#fff;font-size:1.15rem;margin-top:5px}.card.green strong{color:var(--green)}.metric-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:12px}.anchor-viz{border:1px solid var(--line);border-radius:14px;padding:16px;margin-top:14px;background:rgba(255,255,255,.035)}.range{position:relative;height:22px;border-radius:999px;margin:18px 0 22px;background:linear-gradient(90deg,rgba(242,180,71,.55),var(--green) 12%,var(--green) 88%,rgba(242,180,71,.55))}.boundary{position:absolute;top:-8px;width:4px;height:38px;border-radius:999px;background:var(--green);box-shadow:0 0 12px rgba(62,227,145,.7)}.boundary.put{left:12%}.boundary.call{left:88%}.spot{position:absolute;top:-12px;width:4px;height:46px;border-radius:999px;background:#fff;box-shadow:0 0 18px var(--cyan)}.labels{display:flex;justify-content:space-between;gap:12px;color:#fff}.status{color:var(--amber);margin-top:10px}.small{color:var(--muted);font-size:.9rem}@media(max-width:900px){.grid,.ticket,.metric-row{grid-template-columns:1fr}.panel{padding:16px}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="wrap nav"><div class="brand"><div class="mark">PP</div><div><div class="title">POPPA’S Order Ticket Change Preview</div><div class="sub">Sandbox only · live scanner protected</div></div></div><div class="badge">Test Preview</div></div></header>
+  <main class="wrap">
+    <section class="panel">
+      <p class="eyebrow">Change Request</p>
+      <h1>Separate Put and Call Anchor P(OTM) values in the Order Ticket</h1>
+      <div class="note"><strong>Sandbox rule:</strong> this test page does not modify the working scanner page. It pulls scanner rows and renders a separate preview ticket for validation.</div>
+      <div class="actions"><button class="btn primary" id="loadBtn">Load Preview Rows</button><button class="btn secondary" id="clearBtn">Clear Selection</button></div>
+      <div class="status" id="status">Waiting to load preview rows.</div>
+    </section>
+    <section class="grid">
+      <div class="panel">
+        <p class="eyebrow">Candidate Rows</p>
+        <h2>Select a row</h2>
+        <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Spot</th><th>DTE</th><th>Short Put</th><th>Short Call</th><th>Put P(OTM)</th><th>Call P(OTM)</th></tr></thead><tbody id="rows"><tr><td colspan="7" class="small">Press Load Preview Rows.</td></tr></tbody></table></div>
+      </div>
+      <div class="panel" id="ticketPanel">
+        <p class="eyebrow">Order Ticket Preview</p>
+        <h2>Select a candidate to render the ticket.</h2>
+        <div class="note">The ticket will show separate Put Anchor P(OTM) and Call Anchor P(OTM) metric cards.</div>
+      </div>
+    </section>
+  </main>
+  <script>
+    (function(){
+      var ENDPOINT='/.netlify/functions/scan-results-db?limit=25&offset=0&rocMin=-999&rocMax=999&minProb=0&ivMin=0&minOI=0&minShortOI=0&maxSpread=999&dteMin=15&dteMax=45&excludeEarnings=no&idx=both&width=0&ivStatus=All&emStatus=All&rankBy=edge';
+      var data=[];
+      function el(id){return document.getElementById(id)}
+      function money(v){var n=Number(v);return Number.isFinite(n)?'$'+n.toFixed(2):'—'}
+      function pct(v){var n=Number(v);if(!Number.isFinite(n))return '—';if(n<=1)n=n*100;return Math.round(n)+'%'}
+      function esc(v){return String(v==null||v===''?'—':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+      function putProb(r){return r.putProbOtm!=null?r.putProbOtm:(r.put_prob_otm!=null?r.put_prob_otm:r.probOtm)}
+      function callProb(r){return r.callProbOtm!=null?r.callProbOtm:(r.call_prob_otm!=null?r.call_prob_otm:r.probOtm)}
+      function renderRows(){var body=el('rows');if(!data.length){body.innerHTML='<tr><td colspan="7" class="small">No preview rows returned.</td></tr>';return}body.innerHTML=data.map(function(r,i){return '<tr class="row" data-i="'+i+'"><td><strong>'+esc(r.symbol)+'</strong></td><td>'+money(r.spot)+'</td><td>'+esc(r.dte)+'</td><td>'+esc(r.shortPut||r.short_put)+'</td><td>'+esc(r.shortCall||r.short_call)+'</td><td>'+pct(putProb(r))+'</td><td>'+pct(callProb(r))+'</td></tr>'}).join('');body.querySelectorAll('tr').forEach(function(tr){tr.onclick=function(){body.querySelectorAll('tr').forEach(function(x){x.classList.remove('active')});tr.classList.add('active');renderTicket(data[Number(tr.dataset.i)])}})}
+      function renderTicket(r){var spot=Number(r.spot||0),sp=Number(r.shortPut||r.short_put||0),sc=Number(r.shortCall||r.short_call||0);var min=Math.min(sp,sc,spot),max=Math.max(sp,sc,spot);var pos=max>min?Math.max(12,Math.min(88,((spot-min)/(max-min))*100)):50;el('ticketPanel').innerHTML='<p class="eyebrow">Order Ticket Preview</p><h2>'+esc(r.symbol)+' Candidate Review</h2><div class="note"><strong>Educational review only:</strong> verify pricing, liquidity, earnings, and risk independently.</div><div class="ticket"><div class="card green"><span>Short Put</span><strong>'+esc(r.shortPut||r.short_put)+'</strong></div><div class="card"><span>Long Put</span><strong>'+esc(r.longPut||r.long_put)+'</strong></div><div class="card green"><span>Short Call</span><strong>'+esc(r.shortCall||r.short_call)+'</strong></div><div class="card"><span>Long Call</span><strong>'+esc(r.longCall||r.long_call)+'</strong></div></div><div class="metric-row"><div class="card"><span>Credit</span><strong>'+money(r.credit)+'</strong></div><div class="card"><span>Max Risk</span><strong>'+money(r.maxRisk||r.max_risk)+'</strong></div><div class="card"><span>ROC</span><strong>'+esc(r.roc)+'%</strong></div><div class="card"><span>Put Anchor P(OTM)</span><strong>'+pct(putProb(r))+'</strong></div><div class="card"><span>Call Anchor P(OTM)</span><strong>'+pct(callProb(r))+'</strong></div></div><div class="anchor-viz"><p class="eyebrow">Anchor P(OTM) · Price must finish inside the green box</p><div class="range"><span class="boundary put"></span><span class="spot" style="left:'+pos+'%"></span><span class="boundary call"></span></div><div class="labels"><span>put anchor '+esc(sp)+' · '+pct(putProb(r))+'</span><span>'+pct(callProb(r))+' · call anchor '+esc(sc)+'</span></div></div>'}
+      el('loadBtn').onclick=function(){el('status').textContent='Loading preview rows…';fetch(ENDPOINT+'&_ts='+Date.now(),{cache:'no-store',headers:{accept:'application/json'}}).then(function(r){return r.json()}).then(function(j){data=j.results||[];el('status').textContent='Loaded '+data.length+' preview rows. Select a row to validate the Order Ticket.';renderRows()}).catch(function(e){el('status').textContent='Could not load rows: '+e.message})};
+      el('clearBtn').onclick=function(){el('ticketPanel').innerHTML='<p class="eyebrow">Order Ticket Preview</p><h2>Select a candidate to render the ticket.</h2><div class="note">The ticket will show separate Put Anchor P(OTM) and Call Anchor P(OTM) metric cards.</div>';el('rows').querySelectorAll('tr').forEach(function(x){x.classList.remove('active')})};
+    })();
+  </script>
+</body>
+</html>
