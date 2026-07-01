@@ -1,6 +1,5 @@
-// POPPA'S Option Scanner v3 — Supabase scan control endpoint.
-
-import { createClient } from "@supabase/supabase-js";
+// POPPA'S Option Scanner v3 — Supabase REST scan control endpoint.
+// Controls status/start/continue/restart without Supabase JS client.
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body, null, 2), {
@@ -9,11 +8,29 @@ function json(body, status = 200) {
   });
 }
 
-function supabase() {
+function sbConfig() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
-  return createClient(url, key, { auth: { persistSession: false } });
+  return { url: url.replace(/\/$/, ""), key };
+}
+
+async function sbFetch(path, opts = {}) {
+  const { url, key } = sbConfig();
+  const res = await fetch(`${url}/rest/v1/${path}`, {
+    ...opts,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      ...(opts.headers || {})
+    }
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(`${opts.method || "GET"} ${path} failed ${res.status}: ${text}`);
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json") && text) return { data: JSON.parse(text), headers: res.headers };
+  return { data: text, headers: res.headers };
 }
 
 function baseUrl(req) {
@@ -31,19 +48,13 @@ function ageSeconds(iso) {
   return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 1000)) : null;
 }
 
-async function latestRun(sb) {
-  const { data, error } = await sb.from("scan_runs")
-    .select("*")
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  return data;
+async function latestRun() {
+  const { data } = await sbFetch("scan_runs?select=*&order=started_at.desc&limit=1");
+  return Array.isArray(data) ? data[0] : null;
 }
 
 async function readState() {
-  const sb = supabase();
-  const run = await latestRun(sb);
+  const run = await latestRun();
   if (!run) {
     return {
       ok: true,
@@ -51,6 +62,7 @@ async function readState() {
       status: "empty",
       scanRunId: null,
       building: false,
+      stale: false,
       progress: { scanned: 0, total: 0, rows: 0 },
       recommendation: "EMPTY: start a Supabase-backed scan.",
       endpoints: {
@@ -63,12 +75,13 @@ async function readState() {
   }
 
   const updatedAge = ageSeconds(run.updated_at || run.started_at);
-  const building = ["running", "stale"].includes(run.status);
+  const status = String(run.status || "").toLowerCase();
+  const building = ["running", "stale"].includes(status);
   const stale = building && updatedAge !== null && updatedAge > 240;
   let recommendation = "READY: latest Supabase scan is available.";
   if (building && stale) recommendation = "STALE BUILD: continue Supabase scan.";
   else if (building) recommendation = "BUILDING: continue polling Supabase scan.";
-  else if (run.status === "failed") recommendation = "FAILED: restart Supabase scan after reviewing error.";
+  else if (status === "failed") recommendation = "FAILED: restart Supabase scan after reviewing error.";
 
   return {
     ok: true,
@@ -96,6 +109,7 @@ async function readState() {
       rows: run.candidate_count || 0
     },
     backendFiltersRemoved: !!run.metadata?.backendFiltersRemoved,
+    upstreamFiltersOnly: run.metadata?.upstreamFiltersOnly || ["Monthly option chain", "15-45 DTE"],
     recommendation,
     endpoints: {
       status: "/.netlify/functions/force-scan-db?status=1",
@@ -112,7 +126,7 @@ export default async (req) => {
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || (method === "POST" ? "start" : "status");
 
-    if (method === "GET" || action === "status") {
+    if ((method === "GET" && action === "status") || url.searchParams.has("status")) {
       return json(await readState());
     }
 
@@ -123,7 +137,7 @@ export default async (req) => {
     const endpoint = `${base}/.netlify/functions/scan-build-db${qs}`;
     let trigger;
     try {
-      const res = await fetch(endpoint, { method: "POST" });
+      const res = await fetch(endpoint, { method: "POST", headers: { accept: "application/json" } });
       let body;
       try { body = await res.json(); } catch (_) { body = await res.text().catch(() => null); }
       trigger = { ok: res.ok, status: res.status, body };
